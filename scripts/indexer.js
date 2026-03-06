@@ -11,10 +11,10 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
 const CONFIG = {
-  NAMESPACE: "__default__",
+  NAMESPACE: "placements",
   EMBED_BATCH_SIZE: 50,
   UPSERT_BATCH_SIZE: 100,
-  PDF_FILE: "Faculty.pdf",
+  PDF_FILE: "placement.pdf",
 };
 
 console.log("INDEXER_CONFIG", {
@@ -41,19 +41,31 @@ async function indexDocument() {
 
     console.log("INDEXER_RAW_DOCS", {
       docCount: rawDocs.length,
-      firstDocPreview:
-        rawDocs[0]?.pageContent?.slice(0, 300) || null,
+      firstDocPreview: rawDocs[0]?.pageContent?.slice(0, 300) || null,
     });
 
-    // 🔥 NEW PERFECT RECORD-BASED SPLITTING
     const fullText = rawDocs.map(doc => doc.pageContent).join("\n");
 
-    const records = fullText
-      .split("Name:")
-      .filter(r => r.trim().length > 0)
-      .map(r => "Name:" + r.trim());
+    // overview alag chunk + har company alag chunk
+    const parts = fullText.split("COMPANY:");
+    
+    const records = [];
 
-    console.log(`Total faculty records (chunks): ${records.length}\n`);
+    // pehla part = overview
+    const overview = parts[0].trim();
+    if (overview.length > 0) {
+      records.push(overview);
+    }
+
+    // baaki parts = company records
+    parts.slice(1).forEach(part => {
+      const record = "COMPANY:" + part.trim();
+      if (record.length > 0) {
+        records.push(record);
+      }
+    });
+
+    console.log(`Total records (chunks): ${records.length}\n`);
 
     console.log("INDEXER_CHUNKS", {
       chunkCount: records.length,
@@ -111,15 +123,14 @@ async function indexDocument() {
 
     console.log("INDEXER_EMBEDDINGS_READY", {
       embeddingCount: allEmbeddings.length,
-      firstEmbeddingLength:
-        allEmbeddings[0]?.values?.length || null,
+      firstEmbeddingLength: allEmbeddings[0]?.values?.length || null,
     });
 
     let batch = [];
 
     for (let i = 0; i < records.length; i++) {
       batch.push({
-        id: `chunk-${i}`,
+        id: `placement-chunk-${i}`,
         values: allEmbeddings[i].values,
         metadata: {
           text: records[i],
