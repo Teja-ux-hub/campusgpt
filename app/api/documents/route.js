@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { ai } from "@/lib/gemini";
 import { supabase } from "@/lib/supabase";
+import { checkRateLimit } from "@/lib/ratelimit";
 
 const BUCKET = "pdfs";
 
@@ -49,6 +51,9 @@ User: "${trimmed}"
 
 export async function POST(request) {
   try {
+    const { userId } = await auth();
+    if (!userId) return new NextResponse("Unauthorized", { status: 401 });
+
     const body = await request.json();
     const message = body?.message;
 
@@ -56,6 +61,18 @@ export async function POST(request) {
       return NextResponse.json(
         { error: "Missing message" },
         { status: 400 }
+      );
+    }
+
+    const rateLimit = await checkRateLimit(userId);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: `Daily limit reached. Try again in ${rateLimit.retryAfterMinutes} minutes.`,
+          queryUsed: 5,
+          queryMax: 5
+        },
+        { status: 429 }
       );
     }
 
@@ -67,7 +84,7 @@ export async function POST(request) {
 
     if (error || !data?.signedUrl) {
       return NextResponse.json(
-        { error: "File not found" },
+        { error: "File not found", queryUsed: rateLimit.count, queryMax: 5 },
         { status: 404 }
       );
     }
@@ -75,11 +92,28 @@ export async function POST(request) {
     return NextResponse.json({
       filename,
       url: data.signedUrl,
+      queryUsed: rateLimit.count,
+      queryMax: 5
     });
   } catch (error) {
     return NextResponse.json(
       { error: error.message || "Internal Server Error" },
       { status: 500 }
     );
+  }
+}
+
+export async function GET() {
+  try {
+    const { userId } = await auth();
+    console.log("GET_DOCS_AUTH", { userId });
+    if (!userId) return new NextResponse("Unauthorized", { status: 401 });
+
+    const { getRateLimit } = await import("@/lib/ratelimit");
+    const { count, max } = await getRateLimit(userId);
+    
+    return NextResponse.json({ queryUsed: count, queryMax: max });
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

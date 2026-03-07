@@ -1,14 +1,10 @@
-import { Geist, Geist_Mono } from "next/font/google";
+import { DM_Mono } from "next/font/google";
 import "./globals.css";
 import ClerkWrapper from "./ClerkWrapper";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const dmMono = DM_Mono({
+  weight: ["400", "500"],
+  variable: "--font-dm-mono",
   subsets: ["latin"],
 });
 
@@ -21,7 +17,7 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en" className="dark">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gradient-to-br from-black via-zinc-950 to-zinc-900 text-zinc-100`}
+        className={`${dmMono.variable} antialiased bg-[#060606] text-zinc-100 font-mono`}
       >
         <ClerkWrapper>{children}</ClerkWrapper>
       </body>

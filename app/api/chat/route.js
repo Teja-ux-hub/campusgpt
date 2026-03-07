@@ -10,6 +10,7 @@ import {
   addSemanticCache,
 } from "@/lib/cache";
 import { rerankWithBm25 } from "@/lib/bm25";
+import { checkRateLimit } from "@/lib/ratelimit";
 
 const PINECONE_TOP_K = 100;
 
@@ -182,6 +183,17 @@ export async function POST(request) {
       console.log("CHAT_UNAUTHORIZED_NO_USER");
       return new NextResponse("Unauthorized", { status: 401 });
     }
+
+
+const rateLimit = await checkRateLimit(userId);
+if (!rateLimit.allowed) {
+  return NextResponse.json(
+    {
+      error: `Daily limit of 5 queries reached. Try again in ${rateLimit.retryAfterMinutes} minutes.`
+    },
+    { status: 429 }
+  );
+}
 
     if (!query || typeof query !== "string") {
       return NextResponse.json({ error: "Missing query" }, { status: 400 });
