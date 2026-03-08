@@ -10,11 +10,10 @@ import {
   addSemanticCache,
 } from "@/lib/cache";
 import { rerankWithBm25 } from "@/lib/bm25";
-import { checkRateLimit } from "@/lib/ratelimit";
+import { checkRateLimit, getRateLimit } from "@/lib/ratelimit";
 
 const PINECONE_TOP_K = 100;
 
-// ─── TAVILY ───────────────────────────────────────────────
 async function tavilySearch(query) {
   if (!process.env.TAVILY_API_KEY) {
     console.log("TAVILY_NOT_CONFIGURED");
@@ -29,7 +28,7 @@ async function tavilySearch(query) {
         api_key: process.env.TAVILY_API_KEY,
         query,
         search_depth: "advanced",
-        max_results: 2,        // sirf 2 results
+        max_results: 2,
         include_answer: true,
       }),
     });
@@ -49,7 +48,6 @@ async function tavilySearch(query) {
   }
 }
 
-// ─── PINECONE SEARCH ──────────────────────────────────────
 async function pineconeSearch(queryVector, namespace) {
   const index = getIndex().namespace(namespace);
   let results;
@@ -70,7 +68,6 @@ async function pineconeSearch(queryVector, namespace) {
   return results;
 }
 
-// ─── NAMESPACE DETECT ─────────────────────────────────────
 function detectNamespace(query) {
   const lower = query.toLowerCase();
   if (
@@ -122,9 +119,6 @@ function detectNamespace(query) {
   return "__default__";
 }
 
-// ─── AGENTIC CHECK ────────────────────────────────────────
-// placement + complex = Tavily + Pinecone parallel
-// placement + factual = Pinecone only (RAG)
 function isAgenticQuery(query) {
   const lower = query.toLowerCase();
   return (
@@ -151,7 +145,6 @@ function isAgenticQuery(query) {
   );
 }
 
-// ─── PRONOUN REWRITE ──────────────────────────────────────
 function rewriteQuery(query, userId) {
   const pronouns = ['his', 'her', 'their', 'he', 'she', 'they', 'him'];
   const lower = query.toLowerCase();
@@ -166,7 +159,19 @@ function rewriteQuery(query, userId) {
   return `${nameMatch[0]} ${query}`;
 }
 
-// ─── MAIN HANDLER ─────────────────────────────────────────
+export async function GET() {
+  try {
+    const { userId } = await auth();
+    console.log("GET_CHAT_AUTH", { userId });
+    if (!userId) return new NextResponse("Unauthorized", { status: 401 });
+    const { count, max } = await getRateLimit(userId);
+    return NextResponse.json({ queryUsed: count, queryMax: max });
+  } catch (error) {
+    console.error("GET_CHAT_ERROR", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
 export async function POST(request) {
   try {
     const { userId } = await auth();
@@ -184,59 +189,53 @@ export async function POST(request) {
       return new NextResponse("Unauthorized", { status: 401 });
     }
 
-
-const rateLimit = await checkRateLimit(userId);
-if (!rateLimit.allowed) {
-  return NextResponse.json(
-    {
-      error: `Daily limit of 5 queries reached. Try again in ${rateLimit.retryAfterMinutes} minutes.`
-    },
-    { status: 429 }
-  );
-}
+    const rateLimit = await checkRateLimit(userId);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: `Daily limit reached. Try again in ${rateLimit.retryAfterMinutes} minutes.`,
+          queryUsed: rateLimit.count,
+          queryMax: rateLimit.max
+        },
+        { status: 429 }
+      );
+    }
 
     if (!query || typeof query !== "string") {
       return NextResponse.json({ error: "Missing query" }, { status: 400 });
     }
 
-    // ── 1. EXACT CACHE ──────────────────────────────────────
     const exactCached = getExactCached(query);
     if (exactCached) {
       console.log("CHAT_CACHE_HIT_EXACT", { query });
-      return NextResponse.json({ fromCache: "exact", answer: exactCached });
+      return NextResponse.json({ fromCache: "exact", answer: exactCached, queryUsed: rateLimit.count, queryMax: rateLimit.max });
     }
     console.log("CHAT_CACHE_MISS_EXACT", { query });
 
-    // ── 2. QUERY REWRITE ────────────────────────────────────
     const rewrittenQuery = rewriteQuery(query, userId);
     console.log("QUERY_REWRITTEN", { original: query, rewritten: rewrittenQuery });
 
-    // ── 3. EMBED ────────────────────────────────────────────
     const queryVector = await embedQuery(rewrittenQuery);
     console.log("CHAT_EMBEDDING", { length: queryVector?.length });
 
-    // ── 4. SEMANTIC CACHE ───────────────────────────────────
     const semanticCached = getSemanticCached(queryVector);
     if (semanticCached) {
       console.log("CHAT_CACHE_HIT_SEMANTIC", { query });
-      return NextResponse.json({ fromCache: "semantic", answer: semanticCached });
+      return NextResponse.json({ fromCache: "semantic", answer: semanticCached, queryUsed: rateLimit.count, queryMax: rateLimit.max });
     }
     console.log("CHAT_CACHE_MISS_SEMANTIC", { query });
 
-    // ── 5. ROUTING DECISION ─────────────────────────────────
     const namespace = detectNamespace(query);
     const isPlacement = namespace === "placements";
     const agentic = isPlacement && isAgenticQuery(query);
 
     console.log("ROUTING_DECISION", { namespace, isPlacement, agentic });
 
-    // ── 6A. AGENTIC PATH — TAVILY + PINECONE PARALLEL ───────
     if (agentic) {
       console.log("AGENTIC_PATH_START");
 
       const tavilyQuery = `${query} campus placement India 2025`;
 
-      // parallel — dono ek saath
       const [webRaw, pineconeResults] = await Promise.all([
         tavilySearch(tavilyQuery),
         pineconeSearch(queryVector, namespace),
@@ -247,7 +246,6 @@ if (!rateLimit.allowed) {
         pineconeMatches: pineconeResults?.matches?.length || 0,
       });
 
-      // pinecone → BM25 → top 2 chunks only
       let ragContext = "";
       if (pineconeResults?.matches?.length) {
         const denseResults = pineconeResults.matches.map((match, i) => ({
@@ -255,7 +253,7 @@ if (!rateLimit.allowed) {
           rank: i + 1,
           text: match.metadata?.text || "",
         }));
-        const topDocs = rerankWithBm25(rewrittenQuery, denseResults, 2); // 2 chunks
+        const topDocs = rerankWithBm25(rewrittenQuery, denseResults, 2);
         ragContext = topDocs.map((doc) => doc.text).join("\n\n---\n\n");
         console.log("AGENTIC_RAG_CONTEXT", {
           chunks: topDocs.length,
@@ -306,10 +304,9 @@ ${query}
 
       console.log("CHAT_CACHE_WRITE", { query });
 
-      return NextResponse.json({ answer, agentic: true });
+      return NextResponse.json({ answer, agentic: true, queryUsed: rateLimit.count, queryMax: rateLimit.max });
     }
 
-    // ── 6B. RAG PATH — PINECONE + BM25 ──────────────────────
     console.log("RAG_PATH_START", { namespace });
 
     const pineconeResults = await pineconeSearch(queryVector, namespace);
@@ -321,6 +318,8 @@ ${query}
     if (!pineconeResults?.matches?.length) {
       return NextResponse.json({
         answer: "I could not find relevant information in the documents.",
+        queryUsed: rateLimit.count,
+        queryMax: rateLimit.max
       });
     }
 
@@ -330,7 +329,6 @@ ${query}
       text: match.metadata?.text || "",
     }));
 
-    // faculty / library / factual placement — 3 chunks
     const topDocs = rerankWithBm25(rewrittenQuery, denseResults, 3);
 
     console.log("CHAT_RERANK_TOPDOCS", {
@@ -373,7 +371,7 @@ ${query}
 
     console.log("CHAT_CACHE_WRITE", { query });
 
-    return NextResponse.json({ answer, agentic: false });
+    return NextResponse.json({ answer, agentic: false, queryUsed: rateLimit.count, queryMax: rateLimit.max });
 
   } catch (error) {
     console.error("Chat API error:", error);

@@ -13,8 +13,6 @@ export default function ChatWindow() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSearchingWeb, setIsSearchingWeb] = useState(false);
   const [error, setError] = useState(null);
-  
-  // Query counter states
   const [queryUsed, setQueryUsed] = useState(0);
   const [queryMax, setQueryMax] = useState(5);
 
@@ -23,9 +21,11 @@ export default function ChatWindow() {
   useEffect(() => {
     async function fetchInitialLimit() {
       try {
+        console.log("FETCH_INITIAL_LIMIT_START");
         const res = await fetch("/api/chat");
         if (res.ok) {
           const data = await res.json();
+          console.log("FETCH_INITIAL_LIMIT_SUCCESS", data);
           setQueryUsed(data.queryUsed || 0);
           setQueryMax(data.queryMax || 5);
         }
@@ -53,6 +53,7 @@ export default function ChatWindow() {
     setInput("");
 
     try {
+      console.log("CHAT_CLIENT_SUBMIT", { query });
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -60,6 +61,7 @@ export default function ChatWindow() {
       });
 
       const data = await res.json();
+      console.log("CHAT_CLIENT_RESPONSE", data);
       
       if (data.queryUsed !== undefined) setQueryUsed(data.queryUsed);
       if (data.queryMax !== undefined) setQueryMax(data.queryMax);
@@ -77,6 +79,7 @@ export default function ChatWindow() {
         },
       ]);
     } catch (err) {
+      console.error("CHAT_CLIENT_ERROR", err);
       setError(err.message);
     } finally {
       setIsLoading(false);
@@ -99,7 +102,6 @@ export default function ChatWindow() {
         onBack={() => router.push('/')} 
       />
 
-      {/* Topbar */}
       <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-[#34d399] shadow-[0_0_8px_#34d399]" />
@@ -117,7 +119,6 @@ export default function ChatWindow() {
         </div>
       </div>
 
-      {/* Chat Area */}
       <div 
         ref={scrollRef}
         className="flex-1 overflow-y-auto p-6 space-y-8 scroll-smooth"
@@ -185,7 +186,6 @@ export default function ChatWindow() {
         )}
       </div>
 
-      {/* Input Bar */}
       <div className="p-6 pt-0">
         <div className="relative group">
           <div className="absolute -top-[1px] left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-[#34d399]/40 to-transparent opacity-0 group-focus-within:opacity-100 transition-opacity duration-500" />

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import QueryCounter from "@/components/QueryCounter";
-import { FileText, SendHorizontal, Bot, Globe } from "@/components/ui/Icons";
+import { FileText, SendHorizontal, Bot } from "@/components/ui/Icons";
 
 export default function DocFinder() {
   const router = useRouter();
@@ -25,14 +25,16 @@ export default function DocFinder() {
   useEffect(() => {
     async function fetchInitialLimit() {
       try {
+        console.log("DOCS_FETCH_INITIAL_LIMIT_START");
         const res = await fetch("/api/documents");
         if (res.ok) {
           const data = await res.json();
+          console.log("DOCS_FETCH_INITIAL_LIMIT_SUCCESS", data);
           setQueryUsed(data.queryUsed || 0);
           setQueryMax(data.queryMax || 5);
         }
       } catch (err) {
-        console.error("FAILED_TO_FETCH_LIMIT", err);
+        console.error("DOCS_FAILED_TO_FETCH_LIMIT", err);
       }
     }
     fetchInitialLimit();
@@ -48,6 +50,7 @@ export default function DocFinder() {
     setResult(null);
 
     try {
+      console.log("DOCS_CLIENT_SUBMIT", { message: trimmed });
       const res = await fetch("/api/documents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -55,13 +58,16 @@ export default function DocFinder() {
       });
 
       const data = await res.json();
+      console.log("DOCS_CLIENT_RESPONSE", data);
+      
       if (data.queryUsed !== undefined) setQueryUsed(data.queryUsed);
       if (data.queryMax !== undefined) setQueryMax(data.queryMax);
-      
+
       if (!res.ok) throw new Error(data.error || "File request failed");
 
       setResult(data);
     } catch (err) {
+      console.error("DOCS_CLIENT_ERROR", err);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -79,7 +85,6 @@ export default function DocFinder() {
       <div className="flex-1 flex flex-col items-center justify-center p-6">
         <div className="w-full max-w-xl animate-in fade-in zoom-in-95 duration-700">
           
-          {/* Header Card */}
           <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-8 shadow-2xl backdrop-blur-xl relative overflow-hidden group">
             <div className="absolute top-4 right-6 z-10">
               <Link 
@@ -103,7 +108,6 @@ export default function DocFinder() {
               <h1 className="text-xl font-medium tracking-widest uppercase mb-2">Document Retrieval</h1>
               <p className="text-xs text-zinc-500 tracking-tight mb-8">Secure access to CMRTC syllabus and study materials</p>
 
-              {/* Suggestions */}
               <div className="flex flex-wrap justify-center gap-2 mb-8">
                 {suggestions.map((s, i) => (
                   <button
@@ -116,7 +120,6 @@ export default function DocFinder() {
                 ))}
               </div>
 
-              {/* Search Form */}
               <form onSubmit={handleSubmit} className="w-full relative group/input">
                 <input
                   value={message}
@@ -134,7 +137,6 @@ export default function DocFinder() {
               </form>
             </div>
 
-            {/* Status Area */}
             <div className="mt-8 min-h-[60px] flex items-center justify-center">
               {loading && (
                 <div className="flex gap-2">

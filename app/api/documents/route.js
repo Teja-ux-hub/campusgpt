@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { ai } from "@/lib/gemini";
 import { supabase } from "@/lib/supabase";
-import { checkRateLimit } from "@/lib/ratelimit";
+import { checkRateLimit, getRateLimit } from "@/lib/ratelimit";
 
 const BUCKET = "pdfs";
 
@@ -52,7 +52,13 @@ User: "${trimmed}"
 export async function POST(request) {
   try {
     const { userId } = await auth();
-    if (!userId) return new NextResponse("Unauthorized", { status: 401 });
+
+    console.log("DOCS_REQUEST", { userId, timestamp: new Date().toISOString() });
+
+    if (!userId) {
+      console.log("DOCS_UNAUTHORIZED_NO_USER");
+      return new NextResponse("Unauthorized", { status: 401 });
+    }
 
     const body = await request.json();
     const message = body?.message;
@@ -66,36 +72,42 @@ export async function POST(request) {
 
     const rateLimit = await checkRateLimit(userId);
     if (!rateLimit.allowed) {
+      console.log("DOCS_RATE_LIMIT_BLOCKED", { userId });
       return NextResponse.json(
         {
           error: `Daily limit reached. Try again in ${rateLimit.retryAfterMinutes} minutes.`,
-          queryUsed: 5,
-          queryMax: 5
+          queryUsed: rateLimit.count,
+          queryMax: rateLimit.max
         },
         { status: 429 }
       );
     }
 
+    console.log("DOCS_NORMALIZING_FILENAME", { message });
     const filename = await normalizeToFilename(message);
+    console.log("DOCS_FILENAME_NORMALIZED", { filename });
 
     const { data, error } = await supabase.storage
       .from(BUCKET)
       .createSignedUrl(filename, 60);
 
     if (error || !data?.signedUrl) {
+      console.error("DOCS_FILE_NOT_FOUND", { filename, error });
       return NextResponse.json(
-        { error: "File not found", queryUsed: rateLimit.count, queryMax: 5 },
+        { error: "File not found", queryUsed: rateLimit.count, queryMax: rateLimit.max },
         { status: 404 }
       );
     }
 
+    console.log("DOCS_SIGNED_URL_CREATED", { filename });
     return NextResponse.json({
       filename,
       url: data.signedUrl,
       queryUsed: rateLimit.count,
-      queryMax: 5
+      queryMax: rateLimit.max
     });
   } catch (error) {
+    console.error("Docs API error:", error);
     return NextResponse.json(
       { error: error.message || "Internal Server Error" },
       { status: 500 }
@@ -108,12 +120,10 @@ export async function GET() {
     const { userId } = await auth();
     console.log("GET_DOCS_AUTH", { userId });
     if (!userId) return new NextResponse("Unauthorized", { status: 401 });
-
-    const { getRateLimit } = await import("@/lib/ratelimit");
     const { count, max } = await getRateLimit(userId);
-    
     return NextResponse.json({ queryUsed: count, queryMax: max });
   } catch (error) {
+    console.error("GET_DOCS_ERROR", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
